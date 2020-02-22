@@ -16,11 +16,12 @@
 #include <avr/pgmspace.h>
 #include <avr/eeprom.h>
 #include <avr/interrupt.h>
-
-
+#include "system_timer.h"
 #include "fastio.h"
 #include "Configuration.h"
 #include "pins.h"
+#include "Timer.h"
+extern uint8_t mbl_z_probe_nr;
 
 #ifndef AT90USB
 #define  HardwareSerial_h // trick to disable the standard HWserial
@@ -64,16 +65,23 @@
 
 #include "lcd.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern FILE _uartout;
+#ifdef __cplusplus
+}
+#endif
+
 #define uartout (&_uartout)
 
 #define SERIAL_PROTOCOL(x) (MYSERIAL.print(x))
 #define SERIAL_PROTOCOL_F(x,y) (MYSERIAL.print(x,y))
 #define SERIAL_PROTOCOLPGM(x) (serialprintPGM(PSTR(x)))
 #define SERIAL_PROTOCOLRPGM(x) (serialprintPGM((x)))
-#define SERIAL_PROTOCOLLN(x) (MYSERIAL.print(x),MYSERIAL.write('\n'))
-#define SERIAL_PROTOCOLLNPGM(x) (serialprintPGM(PSTR(x)),MYSERIAL.write('\n'))
-#define SERIAL_PROTOCOLLNRPGM(x) (serialprintPGM((x)),MYSERIAL.write('\n'))
+#define SERIAL_PROTOCOLLN(x) (MYSERIAL.println(x)/*,MYSERIAL.write('\n')*/)
+#define SERIAL_PROTOCOLLNPGM(x) (serialprintPGM(PSTR(x)),MYSERIAL.println()/*write('\n')*/)
+#define SERIAL_PROTOCOLLNRPGM(x) (serialprintPGM((x)),MYSERIAL.println()/*write('\n')*/)
 
 
 extern const char errormagic[] PROGMEM;
@@ -103,15 +111,9 @@ void serial_echopair_P(const char *s_P, unsigned long v);
 
 
 //Things to write to serial from Program memory. Saves 400 to 2k of RAM.
-FORCE_INLINE void serialprintPGM(const char *str)
-{
-  char ch=pgm_read_byte(str);
-  while(ch)
-  {
-    MYSERIAL.write(ch);
-    ch=pgm_read_byte(++str);
-  }
-}
+// Making this FORCE_INLINE is not a good idea when running out of FLASH
+// I'd rather skip a few CPU ticks than 5.5KB (!!) of FLASH
+void serialprintPGM(const char *str);
 
 bool is_buffer_empty();
 void get_command();
@@ -144,27 +146,37 @@ void manage_inactivity(bool ignore_stepper_queue=false);
 #if defined(Z_ENABLE_PIN) && Z_ENABLE_PIN > -1 
 	#if defined(Z_AXIS_ALWAYS_ON)
 		  #ifdef Z_DUAL_STEPPER_DRIVERS
-			#define  enable_z() { WRITE(Z_ENABLE_PIN, Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN, Z_ENABLE_ON); }
-			#define disable_z() { WRITE(Z_ENABLE_PIN,!Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN,!Z_ENABLE_ON); axis_known_position[Z_AXIS] = false; }
+			#define  poweron_z() { WRITE(Z_ENABLE_PIN, Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN, Z_ENABLE_ON); }
+			#define poweroff_z() { WRITE(Z_ENABLE_PIN,!Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN,!Z_ENABLE_ON); axis_known_position[Z_AXIS] = false; }
 		  #else
-			#define  enable_z() WRITE(Z_ENABLE_PIN, Z_ENABLE_ON)
-			#define  disable_z() ;
+			#define  poweron_z() WRITE(Z_ENABLE_PIN, Z_ENABLE_ON)
+			#define poweroff_z() {}
 		  #endif
 	#else
 		#ifdef Z_DUAL_STEPPER_DRIVERS
-			#define  enable_z() { WRITE(Z_ENABLE_PIN, Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN, Z_ENABLE_ON); }
-			#define disable_z() { WRITE(Z_ENABLE_PIN,!Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN,!Z_ENABLE_ON); axis_known_position[Z_AXIS] = false; }
+			#define  poweron_z() { WRITE(Z_ENABLE_PIN, Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN, Z_ENABLE_ON); }
+			#define poweroff_z() { WRITE(Z_ENABLE_PIN,!Z_ENABLE_ON); WRITE(Z2_ENABLE_PIN,!Z_ENABLE_ON); axis_known_position[Z_AXIS] = false; }
 		#else
-			#define  enable_z() WRITE(Z_ENABLE_PIN, Z_ENABLE_ON)
-			#define disable_z() { WRITE(Z_ENABLE_PIN,!Z_ENABLE_ON); axis_known_position[Z_AXIS] = false; }
+			#define  poweron_z() WRITE(Z_ENABLE_PIN, Z_ENABLE_ON)
+			#define poweroff_z() { WRITE(Z_ENABLE_PIN,!Z_ENABLE_ON); axis_known_position[Z_AXIS] = false; }
 		#endif
 	#endif
 #else
-  #define enable_z() ;
-  #define disable_z() ;
+    #define  poweron_z() {}
+    #define poweroff_z() {}
 #endif
 
-
+#ifndef PSU_Delta
+    #define  enable_z()  poweron_z()
+    #define disable_z() poweroff_z()
+#else
+    void init_force_z();
+    void check_force_z();
+    void enable_force_z();
+    void disable_force_z();
+    #define  enable_z()  enable_force_z()
+    #define disable_z() disable_force_z()
+#endif // PSU_Delta
 
 
 //#if defined(Z_ENABLE_PIN) && Z_ENABLE_PIN > -1
@@ -204,6 +216,9 @@ void manage_inactivity(bool ignore_stepper_queue=false);
   #define enable_e2()  /* nothing */
   #define disable_e2() /* nothing */
 #endif
+
+
+#define FARM_FILAMENT_COLOR_NONE 99;
 
 
 enum AxisEnum {X_AXIS=0, Y_AXIS=1, Z_AXIS=2, E_AXIS=3, X_HEAD=4, Y_HEAD=5};
@@ -251,10 +266,22 @@ void refresh_cmd_timeout(void);
 // The standard Arduino timer() function returns this value atomically
 // by disabling / enabling interrupts. This is costly, if the interrupts are known
 // to be disabled.
+#ifdef SYSTEM_TIMER_2
+extern volatile unsigned long timer2_millis;
+#else //SYSTEM_TIMER_2
 extern volatile unsigned long timer0_millis;
-// An unsynchronized equivalent to a standard Arduino millis() function.
+#endif //SYSTEM_TIMER_2
+
+// An unsynchronized equivalent to a standard Arduino _millis() function.
 // To be used inside an interrupt routine.
-FORCE_INLINE unsigned long millis_nc() { return timer0_millis; }
+
+FORCE_INLINE unsigned long millis_nc() { 
+#ifdef SYSTEM_TIMER_2
+	return timer2_millis;
+#else //SYSTEM_TIMER_2
+	return timer0_millis;
+#endif //SYSTEM_TIMER_2
+}
 
 #ifdef FAST_PWM_FAN
 void setPwmFrequency(uint8_t pin, int val);
@@ -265,23 +292,28 @@ void setPwmFrequency(uint8_t pin, int val);
   #define CRITICAL_SECTION_END    SREG = _sreg;
 #endif //CRITICAL_SECTION_START
 
+extern bool fans_check_enabled;
 extern float homing_feedrate[];
 extern bool axis_relative_modes[];
+extern float feedrate;
 extern int feedmultiply;
 extern int extrudemultiply; // Sets extrude multiply factor (in percent) for all extruders
-extern bool volumetric_enabled;
 extern int extruder_multiply[EXTRUDERS]; // sets extrude multiply factor (in percent) for each extruder individually
-extern float filament_size[EXTRUDERS]; // cross-sectional area of filament (in millimeters), typically around 1.75 or 2.85, 0 disables the volumetric calculations for the extruder.
 extern float volumetric_multiplier[EXTRUDERS]; // reciprocal of cross-sectional area of filament (in square millimeters), stored this way to reduce computational burden in planner
 extern float current_position[NUM_AXIS] ;
 extern float destination[NUM_AXIS] ;
-extern float add_homing[3];
 extern float min_pos[3];
 extern float max_pos[3];
 extern bool axis_known_position[3];
-extern float zprobe_zoffset;
 extern int fanSpeed;
-extern void homeaxis(int axis, uint8_t cnt = 1, uint8_t* pstep = 0);
+extern int8_t lcd_change_fil_state;
+extern float default_retraction;
+
+#ifdef TMC2130
+void homeaxis(int axis, uint8_t cnt = 1, uint8_t* pstep = 0);
+#else
+void homeaxis(int axis, uint8_t cnt = 1);
+#endif //TMC2130
 
 
 #ifdef FAN_SOFT_PWM
@@ -289,15 +321,13 @@ extern unsigned char fanSpeedSoftPwm;
 #endif
 
 #ifdef FWRETRACT
-extern bool autoretract_enabled;
 extern bool retracted[EXTRUDERS];
-extern float retract_length, retract_length_swap, retract_feedrate, retract_zlift;
-extern float retract_recover_length, retract_recover_length_swap, retract_recover_feedrate;
+extern float retract_length_swap;
+extern float retract_recover_length_swap;
 #endif
 
-#ifdef HOST_KEEPALIVE_FEATURE
+
 extern uint8_t host_keepalive_interval;
-#endif
 
 extern unsigned long starttime;
 extern unsigned long stoptime;
@@ -329,14 +359,7 @@ extern int fan_speed[2];
 // Handling multiple extruders pins
 extern uint8_t active_extruder;
 
-
-#endif
-
 //Long pause
-extern int saved_feedmultiply;
-extern float HotendTempBckp;
-extern int fanSpeedBckp;
-extern float pause_lastpos[4];
 extern unsigned long pause_time;
 extern unsigned long start_pause_print;
 extern unsigned long t_fan_rising_edge;
@@ -351,6 +374,10 @@ extern char dir_names[3][9];
 extern int8_t lcd_change_fil_state;
 // save/restore printing
 extern bool saved_printing;
+extern uint8_t saved_printing_type;
+#define PRINTING_TYPE_SD 0
+#define PRINTING_TYPE_USB 1
+#define PRINTING_TYPE_NONE 2
 
 //save/restore printing in case that mmu is not responding
 extern bool mmu_print_saved;
@@ -360,14 +387,25 @@ extern uint8_t print_percent_done_normal;
 extern uint16_t print_time_remaining_normal;
 extern uint8_t print_percent_done_silent;
 extern uint16_t print_time_remaining_silent;
+
+#define PRINT_TIME_REMAINING_INIT 0xffff
+
 extern uint16_t mcode_in_progress;
 extern uint16_t gcode_in_progress;
 
-extern bool wizard_active; //autoload temporarily disabled during wizard
+extern LongTimer safetyTimer;
 
-#define PRINT_TIME_REMAINING_INIT 0xffff
 #define PRINT_PERCENT_DONE_INIT   0xff
-#define PRINTER_ACTIVE (IS_SD_PRINTING || is_usb_printing || isPrintPaused || (custom_message_type == CUSTOM_MSG_TYPE_TEMCAL) || saved_printing || (lcd_commands_type == LCD_COMMAND_V2_CAL) || card.paused || mmu_print_saved)
+#define PRINTER_ACTIVE (IS_SD_PRINTING || is_usb_printing || isPrintPaused || (custom_message_type == CustomMsg::TempCal) || saved_printing || (lcd_commands_type == LcdCommands::Layer1Cal) || mmu_print_saved)
+
+//! Beware - mcode_in_progress is set as soon as the command gets really processed,
+//! which is not the same as posting the M600 command into the command queue
+//! There can be a considerable lag between posting M600 and its real processing which might result
+//! in posting multiple M600's into the command queue
+//! Instead, the fsensor uses another state variable :( , which is set to true, when the M600 command is enqued
+//! and is reset to false when the fsensor returns into its filament runout finished handler
+//! I'd normally change this macro, but who knows what would happen in the MMU :)
+#define CHECK_FSENSOR ((IS_SD_PRINTING || is_usb_printing) && (mcode_in_progress != 600) && !saved_printing && e_active())
 
 extern void calculate_extruder_multipliers();
 
@@ -378,19 +416,16 @@ extern void delay_keep_alive(unsigned int ms);
 extern void check_babystep();
 
 extern void long_pause();
+extern void crashdet_stop_and_save_print();
 
-#ifdef DIS
-
+#ifdef HEATBED_ANALYSIS
 void d_setup();
 float d_ReadData();
 void bed_analysis(float x_dimension, float y_dimension, int x_points_num, int y_points_num, float shift_x, float shift_y);
-
-#endif
+void bed_check(float x_dimension, float y_dimension, int x_points_num, int y_points_num, float shift_x, float shift_y);
+#endif //HEATBED_ANALYSIS
 float temp_comp_interpolation(float temperature);
-void temp_compensation_apply();
-void temp_compensation_start();
 void show_fw_version_warnings();
-void erase_eeprom_section(uint16_t offset, uint16_t bytes);
 uint8_t check_printer_version();
 
 #ifdef PINDA_THERMISTOR
@@ -409,21 +444,24 @@ void setup_uvlo_interrupt();
 void setup_fan_interrupt();
 #endif
 
-//extern void recover_machine_state_after_power_panic();
-extern void recover_machine_state_after_power_panic(bool bTiny);
-extern void restore_print_from_eeprom();
+extern bool recover_machine_state_after_power_panic();
+extern void restore_print_from_eeprom(bool mbl_was_active);
 extern void position_menu();
 
 extern void print_world_coordinates();
 extern void print_physical_coordinates();
 extern void print_mesh_bed_leveling_table();
 
+extern void stop_and_save_print_to_ram(float z_move, float e_move);
+extern void restore_print_from_ram_and_continue(float e_move);
+extern void cancel_saved_printing();
+
 
 //estimated time to end of the print
 extern uint16_t print_time_remaining();
 extern uint8_t calc_percent_done();
 
-#ifdef HOST_KEEPALIVE_FEATURE
+
 
 // States for managing Marlin and host communication
 // Marlin sends messages if blocked or busy
@@ -444,9 +482,8 @@ extern uint8_t calc_percent_done();
 #define KEEPALIVE_STATE(n) do { busy_state = n;} while (0)
 extern void host_keepalive();
 //extern MarlinBusyState busy_state;
-extern int busy_state;
+extern int8_t busy_state;
 
-#endif //HOST_KEEPALIVE_FEATURE
 
 #ifdef TMC2130
 
@@ -458,8 +495,6 @@ void force_high_power_mode(bool start_high_power_section);
 #endif //TMC2130
 
 // G-codes
-void gcode_G28(bool home_x_axis, long home_x_value, bool home_y_axis, long home_y_value, bool home_z_axis, long home_z_value, bool calib, bool without_mbl);
-void gcode_G28(bool home_x_axis, bool home_y_axis, bool home_z_axis);
 
 bool gcode_M45(bool onlyZ, int8_t verbosity_level);
 void gcode_M114();
@@ -472,5 +507,10 @@ void proc_commands();
 
 void M600_load_filament();
 void M600_load_filament_movements();
-void M600_wait_for_user();
-void M600_check_state();
+void M600_wait_for_user(float HotendTempBckp);
+void M600_check_state(float nozzle_temp);
+void load_filament_final_feed();
+void marlin_wait_for_click();
+void raise_z_above(float target, bool plan=true);
+
+#endif

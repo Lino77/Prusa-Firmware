@@ -1,3 +1,4 @@
+//! @file
 // Based on the OptiBoot project
 // https://github.com/Optiboot/optiboot
 // Licence GLP 2 or later.
@@ -97,6 +98,7 @@ static const char entry_magic_cfm    [] PROGMEM = "w25x20cl_cfm\n";
 struct block_t;
 extern struct block_t *block_buffer;
 
+//! @brief Enter an STK500 compatible Optiboot boot loader waiting for flashing the languages to an external flash memory.
 void optiboot_w25x20cl_enter()
 {
   if (boot_app_flags & BOOT_APP_FLG_USER0) return;
@@ -130,7 +132,7 @@ void optiboot_w25x20cl_enter()
     }
     // Send the initial magic string.
     while (ptr != end)
-      putch(pgm_read_byte_far(ptr ++));
+      putch(pgm_read_byte(ptr ++));
     watchdogReset();
     // Wait for one second until a magic string (constant entry_magic) is received
     // from the serial line.
@@ -145,7 +147,7 @@ void optiboot_w25x20cl_enter()
           return;
       }
       ch = UDR0;
-      if (pgm_read_byte_far(ptr ++) != ch)
+      if (pgm_read_byte(ptr ++) != ch)
           // Magic was not received correctly, continue with the application
           return;
       watchdogReset();
@@ -153,7 +155,7 @@ void optiboot_w25x20cl_enter()
     // Send the cfm magic string.
     ptr = entry_magic_cfm;
     while (ptr != end)
-      putch(pgm_read_byte_far(ptr ++));
+      putch(pgm_read_byte(ptr ++));
   }
 
   spi_init();
@@ -256,11 +258,11 @@ void optiboot_w25x20cl_enter()
         uint32_t addr = (((uint32_t)rampz) << 16) | address;
         // During a single bootloader run, only erase a 64kB block once.
         // An 8bit bitmask 'pages_erased' covers 512kB of FLASH memory.
-        if (address == 0 && (pages_erased & (1 << addr)) == 0) {
+        if ((address == 0) && (pages_erased & (1 << (addr >> 16))) == 0) {
           w25x20cl_wait_busy();
           w25x20cl_enable_wr();
           w25x20cl_block64_erase(addr);
-          pages_erased |= (1 << addr);
+          pages_erased |= (1 << (addr >> 16));
         }
         w25x20cl_wait_busy();
         w25x20cl_enable_wr();
@@ -272,7 +274,6 @@ void optiboot_w25x20cl_enter()
     /* Read memory block mode, length is big endian.  */
     else if(ch == STK_READ_PAGE) {
       uint32_t addr = (((uint32_t)rampz) << 16) | address;
-      uint8_t desttype;
       register pagelen_t i;
       // Read the page length, with the length transferred each nibble separately to work around
       // the Prusa's USB to serial infamous semicolon issue.
@@ -280,8 +281,8 @@ void optiboot_w25x20cl_enter()
       length |= ((pagelen_t)getch()) << 8;
       length |= getch();
       length |= getch();
-      // Read the destination type. It should always be 'F' as flash.
-      desttype = getch();
+      // Read the destination type. It should always be 'F' as flash. It is not checked.
+      (void)getch();
       verifySpace();
       w25x20cl_wait_busy();
       w25x20cl_rd_data(addr, buff, length);

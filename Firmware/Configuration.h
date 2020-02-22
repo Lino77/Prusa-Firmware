@@ -6,14 +6,26 @@
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
 
+//-//
+#include <avr/pgmspace.h>
+extern const uint16_t _nPrinterType;
+extern const char _sPrinterName[] PROGMEM;
+extern const uint16_t _nPrinterMmuType;
+extern const char _sPrinterMmuName[] PROGMEM;
+extern uint16_t nPrinterType;
+extern PGM_P sPrinterName;
+
 // Firmware version
-#define FW_VERSION "3.4.0"
-#define FW_COMMIT_NR   1327
+#define FW_VERSION "3.9.0-RC1"
+#define FW_COMMIT_NR   3272
 // FW_VERSION_UNKNOWN means this is an unofficial build.
 // The firmware should only be checked into github with this symbol.
 #define FW_DEV_VERSION FW_VERSION_UNKNOWN
 #define FW_REPOSITORY "Unknown"
 #define FW_VERSION_FULL FW_VERSION "-" STR(FW_COMMIT_NR)
+
+// G-code language level
+#define GCODE_LEVEL 1
 
 // Debug version has debugging enabled (the symbol DEBUG_BUILD is set).
 // The debug build may be a bit slower than the non-debug build, therefore the debug build should
@@ -101,11 +113,6 @@
 // #define PS_DEFAULT_OFF
 
 
-
-// This makes temp sensor 1 a redundant sensor for sensor 0. If the temperatures difference between these sensors is to high the print will be aborted.
-//#define TEMP_SENSOR_1_AS_REDUNDANT
-#define MAX_REDUNDANT_TEMP_SENSOR_DIFF 10
-
 // Actual temperature must be close to target for this long before M109 returns success
 #define TEMP_RESIDENCY_TIME 3  // (seconds)
 #define TEMP_HYSTERESIS 5       // (degC) range of +/- temperatures considered "close" to the target one
@@ -126,15 +133,13 @@
 // Comment the following line to disable PID and enable bang-bang.
 #define PIDTEMP
 #define BANG_MAX 255 // limits current to nozzle while in bang-bang mode; 255=full current
-#define PID_MAX BANG_MAX // limits current to nozzle while PID is active (see PID_FUNCTIONAL_RANGE below); 255=full current
+#define PID_MAX BANG_MAX // limits current to nozzle while PID is active; 255=full current
 #ifdef PIDTEMP
   //#define PID_DEBUG // Sends debug data to the serial port.
   //#define PID_OPENLOOP 1 // Puts PID in open loop. M104/M140 sets the output power from 0 to PID_MAX
   //#define SLOW_PWM_HEATERS // PWM with very low frequency (roughly 0.125Hz=8s) and minimum state time of approximately 1s useful for heaters driven by a relay
-  #define PID_FUNCTIONAL_RANGE 10 // If the temperature difference between the target temperature and the actual temperature
-                                  // is more then PID_FUNCTIONAL_RANGE then the PID will be shut off and the heater will be set to min/max.
   #define PID_INTEGRAL_DRIVE_MAX PID_MAX  //limit for the integral term
-  #define K1 0.95 //smoothing factor within the PID
+  #define PID_K1 0.95 //smoothing factor within the PID
   #define PID_dT ((OVERSAMPLENR * 10.0)/(F_CPU / 64.0 / 256.0)) //sampling period of the temperature routine
 
 // If you are using a pre-configured hotend then you can use one of the value sets by uncommenting it
@@ -281,6 +286,8 @@ your extruder heater takes 2 minutes to hit the target on heating.
 
 #define Z_HEIGHT_HIDE_LIVE_ADJUST_MENU 2.0f
 
+#define HOME_Z_SEARCH_THRESHOLD 0.15f             // Threshold of the Z height in calibration
+
 //============================= Bed Auto Leveling ===========================
 
 //#define ENABLE_AUTO_BED_LEVELING // Delete the comment to enable (remove // at the start of the line)
@@ -338,7 +345,7 @@ your extruder heater takes 2 minutes to hit the target on heating.
   #define Y_PROBE_OFFSET_FROM_EXTRUDER -29
   #define Z_PROBE_OFFSET_FROM_EXTRUDER -12.35
 
-  #define Z_RAISE_BEFORE_HOMING 4       // (in mm) Raise Z before homing (G28) for Probe Clearance.
+  #define Z_RAISE_BEFORE_HOMING 5       // (in mm) Raise Z before homing (G28) for Probe Clearance.
                                         // Be sure you have this distance over your Z_MAX_POS in case
 
   #define XY_TRAVEL_SPEED 8000         // X and Y axis travel speed between probes, in mm/min
@@ -417,7 +424,7 @@ your extruder heater takes 2 minutes to hit the target on heating.
 #define DEFAULT_XJERK                10       // (mm/sec)
 #define DEFAULT_YJERK                10       // (mm/sec)
 #define DEFAULT_ZJERK                 0.4     // (mm/sec)
-#define DEFAULT_EJERK                 2.5     // (mm/sec)
+#define DEFAULT_EJERK                 4.5     // (mm/sec)
 
 //===========================================================================
 //=============================Additional Features===========================
@@ -448,7 +455,9 @@ your extruder heater takes 2 minutes to hit the target on heating.
 // When enabled Marlin will send a busy status message to the host
 // every couple of seconds when it can't accept commands.
 //
+#ifndef HEATBED_ANALYSIS
 #define HOST_KEEPALIVE_FEATURE    // Disable this if your host doesn't like keepalive messages
+#endif //HEATBED_ANALYSIS
 #define HOST_KEEPALIVE_INTERVAL 2 // Number of seconds between "busy" messages. Set with M113.
 
 //LCD and SD support
@@ -477,7 +486,11 @@ your extruder heater takes 2 minutes to hit the target on heating.
 // Use software PWM to drive the fan, as for the heaters. This uses a very low frequency
 // which is not ass annoying as with the hardware PWM. On the other hand, if this frequency
 // is too low, you should also increment SOFT_PWM_SCALE.
-//#define FAN_SOFT_PWM
+#define FAN_SOFT_PWM
+#define FAN_SOFT_PWM_BITS 4 //PWM bit resolution = 4bits, freq = 62.5Hz
+
+// Bed soft pwm
+#define HEATER_BED_SOFT_PWM_BITS 5 //PWM bit resolution = 5bits, freq = 31.25Hz
 
 // Incrementing this by 1 will double the software PWM frequency,
 // affecting heaters, and the fan if FAN_SOFT_PWM is enabled.
@@ -535,6 +548,12 @@ enum CalibrationStatus
     // Currently the G86 sets the calibration status to 
     CALIBRATION_STATUS_UNKNOWN = 0,
 };
+
+// Try to maintain a minimum distance from the bed even when Z is
+// unknown when doing the following operations
+#define MIN_Z_FOR_LOAD    50
+#define MIN_Z_FOR_UNLOAD  20
+#define MIN_Z_FOR_PREHEAT 10
 
 #include "Configuration_adv.h"
 #include "thermistortables.h"

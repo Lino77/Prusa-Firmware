@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
+#include "pins.h"
 
 uint8_t adc_state;
 uint8_t adc_count;
@@ -24,8 +25,8 @@ void adc_init(void)
 	ADMUX |= (1 << REFS0);
 	ADCSRA |= (1 << ADEN);
 //	ADCSRA |= (1 << ADIF) | (1 << ADSC);
-	DIDR0 = (ADC_CHAN_MSK & 0xff);
-	DIDR2 = (ADC_CHAN_MSK >> 8);
+	DIDR0 = ((ADC_CHAN_MSK & ADC_DIDR_MSK) & 0xff);
+	DIDR2 = ((ADC_CHAN_MSK & ADC_DIDR_MSK) >> 8);
 	adc_reset();
 //	adc_sim_mask = 0b0101;
 //	adc_sim_mask = 0b100101;
@@ -71,7 +72,7 @@ void adc_cycle(void)
 		uint8_t index = adc_state & 0x0f;
 		if ((adc_sim_mask & (1 << index)) == 0)
 			adc_values[index] += ADC;
-		if (index++ >= ADC_CHAN_CNT)
+		if (++index >= ADC_CHAN_CNT)
 		{
 			index = 0;
 			adc_count++;

@@ -81,6 +81,8 @@ generate_binary()
  rm -f lang_$1.tmp
  rm -f lang_$1.dat
  LNG=$1
+ #check lang dictionary
+ /usr/bin/env python lang-check.py $1 --no-warning
  #create lang_xx.tmp - different processing for 'en' language
  if [ "$1" = "en" ]; then
   #remove comments and empty lines
@@ -130,6 +132,7 @@ if [ "$1" = "all" ]; then
  generate_binary 'cz'
  generate_binary 'de'
  generate_binary 'es'
+ generate_binary 'fr'
  generate_binary 'it'
  generate_binary 'pl'
 else

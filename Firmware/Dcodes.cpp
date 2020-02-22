@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <avr/pgmspace.h>
 
+#define SHOW_TEMP_ADC_VALUES
+#include "temperature.h"
+
 
 #define DBG(args...) printf_P(args)
 
@@ -34,7 +37,6 @@ void print_eeprom(uint16_t address, uint16_t count, uint8_t countperline = 16)
 		uint8_t count_line = countperline;
 		while (count && count_line)
 		{
-			uint8_t data = 0;
 			putchar(' ');
 			print_hex_byte(eeprom_read_byte((uint8_t*)address++));
 			count_line--;
@@ -97,6 +99,18 @@ void print_mem(uint32_t address, uint16_t count, uint8_t type, uint8_t countperl
 
 #ifdef DEBUG_DCODE3
 #define EEPROM_SIZE 0x1000
+    /*!
+    *
+    ### D3 - Read/Write EEPROM <a href="https://reprap.org/wiki/G-code#D3:_Read.2FWrite_EEPROM">D3: Read/Write EEPROM</a>
+    This command can be used without any additional parameters. It will read the entire eeprom.
+      
+          D3 [ A | C | X ]
+      
+      - `A` - Address (0x0000-0x0fff)
+      - `C` - Count (0x0001-0x1000)
+      - `X` - Data
+    *
+    */
 void dcode_3()
 {
 	DBG(_N("D3 - Read/Write EEPROM\n"));
@@ -115,7 +129,7 @@ void dcode_3()
 		count = parse_hex(strchr_pointer + 1, data, 16);
 		if (count > 0)
 		{
-			for (int i = 0; i < count; i++)
+			for (uint16_t i = 0; i < count; i++)
 				eeprom_write_byte((uint8_t*)(address + i), data[i]);
 			printf_P(_N("%d bytes written to EEPROM at address 0x%04x"), count, address);
 			putchar('\n');
@@ -142,7 +156,6 @@ void dcode_3()
 }
 #endif //DEBUG_DCODE3
 
-#ifdef DEBUG_DCODES
 
 #include "ConfigurationStore.h"
 #include "cmdqueue.h"
@@ -150,8 +163,9 @@ void dcode_3()
 #include "adc.h"
 #include "temperature.h"
 #include <avr/wdt.h>
+#include "bootapp.h"
 
-
+#if 0
 #define FLASHSIZE     0x40000
 
 #define RAMSIZE        0x2000
@@ -170,16 +184,36 @@ extern float current_temperature_pinda;
 extern float axis_steps_per_unit[NUM_AXIS];
 
 
-//#define LOG(args...) printf(args)
+#define LOG(args...) printf(args)
+#endif //0
 #define LOG(args...)
 
+    /*!
+    *
+    ### D-1 - Endless Loop <a href="https://reprap.org/wiki/G-code#G28:_Move_to_Origin_.28Home.29">D-1: Endless Loop</a>
+      
+          D-1
+      
+    *
+    */
 void dcode__1()
 {
-	printf("D-1 - Endless loop\n");
-	cli();
+	printf_P(PSTR("D-1 - Endless loop\n"));
+//	cli();
 	while (1);
 }
 
+#ifdef DEBUG_DCODES
+
+    /*!
+    *
+    ### D0 - Reset <a href="https://reprap.org/wiki/G-code#D0:_Reset">D0: Reset</a>
+      
+          D0 [ B ]
+      
+      - `B` - Bootloader
+    *
+    */
 void dcode_0()
 {
 	if (*(strchr_pointer + 1) == 0) return;
@@ -198,6 +232,14 @@ void dcode_0()
 	}
 }
 
+    /*!
+    *
+    ### D1 - Clear EEPROM and RESET <a href="https://reprap.org/wiki/G-code#D1:_Clear_EEPROM_and_RESET">D1: Clear EEPROM and RESET</a>
+      
+          D1
+      
+    *
+    */
 void dcode_1()
 {
 	LOG("D1 - Clear EEPROM and RESET\n");
@@ -208,6 +250,18 @@ void dcode_1()
 	while(1);
 }
 
+    /*!
+    *
+    ### D2 - Read/Write RAM <a href="https://reprap.org/wiki/G-code#D2:_Read.2FWrite_RAM">D2: Read/Write RAM</a>
+    This command can be used without any additional parameters. It will read the entire RAM.
+      
+          D2 [ A | C | X ]
+      
+      - `A` - Address (0x0000-0x1fff)
+      - `C` - Count (0x0001-0x2000)
+      - `X` - Data
+    *
+    */
 void dcode_2()
 {
 	LOG("D2 - Read/Write RAM\n");
@@ -226,7 +280,7 @@ void dcode_2()
 		count = parse_hex(strchr_pointer + 1, data, 16);
 		if (count > 0)
 		{
-			for (int i = 0; i < count; i++)
+			for (uint16_t i = 0; i < count; i++)
 				*((uint8_t*)(address + i)) =  data[i];
 			LOG("%d bytes written to RAM at address %04x", count, address);
 		}
@@ -251,6 +305,19 @@ void dcode_2()
 	}*/
 }
 
+    /*!
+    *
+    ### D4 - Read/Write PIN <a href="https://reprap.org/wiki/G-code#D4:_Read.2FWrite_PIN">D4: Read/Write PIN</a>
+    
+    To read the digital value of a pin you need only to define the pin number.
+      
+          D4 [ P | F | V ]
+      
+      - `P` - Pin (0-255)
+      - `F` - Function in/out (0/1)
+      - `V` - Value (0/1)
+    *
+    */
 void dcode_4()
 {
 	LOG("D4 - Read/Write PIN\n");
@@ -279,10 +346,26 @@ void dcode_4()
 		}
 	}
 }
-/*
+#endif //DEBUG_DCODES
+
+#ifdef DEBUG_DCODE5
+
+    /*!
+    *
+    ### D5 - Read/Write FLASH <a href="https://reprap.org/wiki/G-code#D5:_Read.2FWrite_FLASH">D5: Read/Write Flash</a>
+    This command can be used without any additional parameters. It will read the 1kb FLASH.
+      
+          D5 [ A | C | X | E ]
+      
+      - `A` - Address (0x00000-0x3ffff)
+      - `C` - Count (0x0001-0x2000)
+      - `X` - Data
+      - `E` - Erase
+    *
+    */
 void dcode_5()
 {
-	LOG("D5 - Read/Write FLASH\n");
+	printf_P(PSTR("D5 - Read/Write FLASH\n"));
 	uint32_t address = 0x0000; //default 0x0000
 	uint16_t count = 0x0400; //default 0x0400 (1kb block)
 	if (code_seen('A')) // Address (0x00000-0x3ffff)
@@ -306,17 +389,11 @@ void dcode_5()
 	{
 		if (bErase)
 		{
-			LOG(count, DEC);
-			LOG(" bytes of FLASH at address ");
-			print_hex_word(address);
-			putchar(" will be erased\n");
+			printf_P(PSTR("%d bytes of FLASH at address %05x will be erased\n"), count, address);
 		}
 		if (bCopy)
 		{
-			LOG(count, DEC);
-			LOG(" bytes will be written to FLASH at address ");
-			print_hex_word(address);
-			putchar('\n');
+			printf_P(PSTR("%d  bytes will be written to FLASH at address %05x\n"), count, address);
 		}
 		cli();
 		boot_app_magic = 0x55aa55aa;
@@ -324,6 +401,7 @@ void dcode_5()
 		boot_copy_size = (uint16_t)count;
 		boot_dst_addr = (uint32_t)address;
 		boot_src_addr = (uint32_t)(&data);
+		bootapp_print_vars();
 		wdt_enable(WDTO_15MS);
 		while(1);
 	}
@@ -344,13 +422,29 @@ void dcode_5()
 		putchar('\n');
 	}
 }
-*/
+#endif //DEBUG_DCODE5
 
+#ifdef DEBUG_DCODES
+
+    /*!
+    *
+    ### D6 - Read/Write external FLASH <a href="https://reprap.org/wiki/G-code#D6:_Read.2FWrite_external_FLASH">D6: Read/Write external Flash</a>
+    
+    Reserved
+   *
+   */
 void dcode_6()
 {
 	LOG("D6 - Read/Write external FLASH\n");
 }
 
+    /*!
+    *
+    ### D7 - Read/Write Bootloader <a href="https://reprap.org/wiki/G-code#D7:_Read.2FWrite_Bootloader">D7: Read/Write Bootloader</a>
+    
+    Reserved
+   *
+   */
 void dcode_7()
 {
 	LOG("D7 - Read/Write Bootloader\n");
@@ -366,6 +460,18 @@ void dcode_7()
 */
 }
 
+    /*!
+    *
+    ### D8 - Read/Write PINDA <a href="https://reprap.org/wiki/G-code#D8:_Read.2FWrite_PINDA">D8: Read/Write PINDA</a>
+      
+          D8 [ ? | ! | P | Z ]
+      
+      - `?` - Read PINDA temperature shift values
+      - `!` - Reset PINDA temperature shift values to default
+      - `P` - Pinda temperature [C]
+      - `Z` - Z Offset [mm]
+    *
+    */
 void dcode_8()
 {
 	printf_P(PSTR("D8 - Read/Write PINDA\n"));
@@ -379,7 +485,7 @@ void dcode_8()
 		{
 			uint16_t offs = 0;
 			if (i > 0) offs = eeprom_read_word(((uint16_t*)EEPROM_PROBE_TEMP_SHIFT) + (i - 1));
-			float foffs = ((float)offs) / axis_steps_per_unit[Z_AXIS];
+			float foffs = ((float)offs) / cs.axis_steps_per_unit[Z_AXIS];
 			offs = 1000 * foffs;
 			printf_P(PSTR("temp_pinda=%dC temp_shift=%dum\n"), 35 + i * 5, offs);
 		}
@@ -407,6 +513,23 @@ void dcode_8()
 	printf_P(PSTR("temp_pinda=%d offset_z=%d.%03d\n"), (int)temp_pinda, (int)offset_z, ((int)(1000 * offset_z) % 1000));
 }
 
+    /*!
+    *
+    ### D9 - Read ADC <a href="https://reprap.org/wiki/G-code#D9:_Read.2FWrite_ADC">D9: Read ADC</a>
+      
+          D9 [ I | V ]
+      
+      - `I` - ADC channel index 
+         - `0` - Heater 0 temperature
+         - `1` - Heater 1 temperature
+         - `2` - Bed temperature
+         - `3` - PINDA temperature
+         - `4` - PWR voltage
+         - `5` - Ambient temperature
+         - `6` - BED voltage
+      - `V` Value to be written as simulated
+    *
+    */
 const char* dcode_9_ADC_name(uint8_t i)
 {
 	switch (i)
@@ -421,10 +544,6 @@ const char* dcode_9_ADC_name(uint8_t i)
 	}
 	return 0;
 }
-
-extern int current_temperature_raw[EXTRUDERS];
-extern int current_temperature_bed_raw;
-extern int current_temperature_raw_pinda;
 
 #ifdef AMBIENT_THERMISTOR
 extern int current_temperature_raw_ambient;
@@ -484,12 +603,24 @@ void dcode_9()
 	}
 }
 
+    /*!
+    *
+    ### D10 - Set XYZ calibration = OK <a href="https://reprap.org/wiki/G-code#D10:_Set_XYZ_calibration_.3D_OK">D10: Set XYZ calibration = OK</a>
+    
+   *
+   */
 void dcode_10()
 {//Tell the printer that XYZ calibration went OK
 	LOG("D10 - XYZ calibration = OK\n");
 	calibration_status_store(CALIBRATION_STATUS_LIVE_ADJUST); 
 }
 
+    /*!
+    *
+    ### D12 - Time <a href="https://reprap.org/wiki/G-code#D12:_Time">D12: Time</a>
+    
+   *
+   */
 void dcode_12()
 {//Time
 	LOG("D12 - Time\n");
@@ -605,16 +736,16 @@ void dcode_2130()
 			else if (strncmp(strchr_pointer + 7, "mres", 4) == 0)
 			{
 				uint8_t mres = strchr_pointer[11] - '0';
-				if ((mres >= 0) && (mres <= 8))
+				if (mres <= 8)
 				{
 					st_synchronize();
 					uint16_t res = tmc2130_get_res(axis);
 					uint16_t res_new = tmc2130_mres2usteps(mres);
 					tmc2130_set_res(axis, res_new);
 					if (res_new > res)
-						axis_steps_per_unit[axis] *= (res_new / res);
+						cs.axis_steps_per_unit[axis] *= (res_new / res);
 					else
-						axis_steps_per_unit[axis] /= (res / res_new);
+						cs.axis_steps_per_unit[axis] /= (res / res_new);
 				}
 			}
 			else if (strncmp(strchr_pointer + 7, "wave", 4) == 0)
@@ -635,6 +766,20 @@ void dcode_2130()
 #endif //TMC2130
 
 #ifdef PAT9125
+    /*!
+    *
+    ### D9125 - PAT9125 filament sensor <a href="https://reprap.org/wiki/G-code#D9:_Read.2FWrite_ADC">D9125: PAT9125 filament sensor</a>
+      
+          D9125 [ ? | ! | R | X | Y | L ]
+      
+      - `?` - Print values
+      - `!` - Print values
+      - `R` - Resolution. Not active in code
+      - `X` - X values
+      - `Y` - Y values
+      - `L` - Activate filament sensor log
+    *
+    */
 void dcode_9125()
 {
 	LOG("D9125 - PAT9125\n");
